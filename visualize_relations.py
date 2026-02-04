@@ -22,6 +22,7 @@ import matplotlib.patches as mpl_patches
 import networkx as nx
 import numpy as np
 import sys
+import argparse
 from pathlib import Path
 
 
@@ -96,16 +97,27 @@ def force_directed_layout(G: nx.Graph, iterations: int = 500, seed: int = 42) ->
     - Strong ratings (A, E) pull nodes together
     - X ratings push nodes apart
     - All nodes have base repulsion to prevent overlap
+    
+    Args:
+        G: NetworkX graph
+        iterations: Number of force-directed iterations
+        seed: Random seed for reproducible layouts (different seeds = different layouts)
     """
     np.random.seed(seed)
     
     num_nodes = G.number_of_nodes()
     nodes = list(G.nodes())
     
-    # Initialize positions in a circle
+    # Initialize positions randomly in a circle (using the seed for different starting layouts)
     angles = np.linspace(0, 2 * np.pi, num_nodes, endpoint=False)
-    positions = {node: np.array([2.0 * np.cos(angles[i]), 2.0 * np.sin(angles[i])]) 
-                 for i, node in enumerate(nodes)}
+    # Add random rotation and radius variation to make each seed unique
+    angle_offset = np.random.uniform(0, 2 * np.pi)
+    angles = angles + angle_offset
+    radius_variation = np.random.uniform(0.8, 1.2, num_nodes)  # Vary radius slightly
+    positions = {node: np.array([
+        2.0 * radius_variation[i] * np.cos(angles[i]), 
+        2.0 * radius_variation[i] * np.sin(angles[i])
+    ]) for i, node in enumerate(nodes)}
     
     # Simulation parameters
     temperature = 1.0  # Initial movement range
@@ -330,7 +342,7 @@ def calculate_edge_curvatures(G: nx.Graph, pos: dict) -> dict:
     return curvatures
 
 
-def generate_relationship_diagram(G: nx.Graph, output_file: str, data: dict, include_u: bool = True, pos: dict = None, curvatures: dict = None):
+def generate_relationship_diagram(G: nx.Graph, output_file: str, data: dict, include_u: bool = True, pos: dict = None, curvatures: dict = None, seed: int = 42):
     """Generate the relationship diagram PNG.
     
     Args:
@@ -340,6 +352,7 @@ def generate_relationship_diagram(G: nx.Graph, output_file: str, data: dict, inc
         include_u: Whether to include U (Unimportant) lines
         pos: Pre-computed positions (optional, will compute if None)
         curvatures: Pre-computed curvatures (optional, will compute if None)
+        seed: Random seed for layout generation (default: 42)
     
     Returns:
         tuple: (pos, curvatures) for reuse in subsequent calls
@@ -351,7 +364,7 @@ def generate_relationship_diagram(G: nx.Graph, output_file: str, data: dict, inc
     # Use custom force-directed layout with attraction/repulsion
     if pos is None:
         print("Calculating force-directed layout (this may take a moment)...")
-        pos = force_directed_layout(G, iterations=500, seed=42)
+        pos = force_directed_layout(G, iterations=500, seed=seed)
     
     # Calculate curvatures to avoid parallel edge overlaps
     if curvatures is None:
@@ -456,7 +469,7 @@ def generate_relationship_diagram(G: nx.Graph, output_file: str, data: dict, inc
         loc=best_corner,
         fontsize=11,
         framealpha=0.9,
-        title='Relationship Rating',
+        title=f'Relationship Rating\nSeed: {seed}',
         title_fontsize=12
     )
     
@@ -523,9 +536,36 @@ def generate_component_legend(data: dict, output_file: str):
 
 def main():
     """Main function to run the visualization."""
-    # Default file paths
-    if len(sys.argv) > 1:
-        json_file = sys.argv[1]
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description='Generate machine proximity relationship visualizations',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python visualize_relations.py                    # Use default relations.json, seed=42
+  python visualize_relations.py data.json          # Use custom JSON file
+  python visualize_relations.py --seed 123         # Different layout with seed=123
+  python visualize_relations.py data.json -s 456   # Custom file and seed
+        """
+    )
+    parser.add_argument(
+        'json_file',
+        nargs='?',
+        default=None,
+        help='Path to JSON file with component relations (default: relations.json)'
+    )
+    parser.add_argument(
+        '-s', '--seed',
+        type=int,
+        default=42,
+        help='Random seed for layout generation (default: 42). Use different seeds to create different layouts.'
+    )
+    
+    args = parser.parse_args()
+    
+    # Determine input file
+    if args.json_file:
+        json_file = Path(args.json_file)
     else:
         json_file = Path(__file__).parent / 'relations.json'
     
@@ -552,11 +592,13 @@ def main():
     # Create graph
     G = create_relationship_graph(data)
     
+    print(f"Using random seed: {args.seed}")
+    
     # Generate diagram WITH U lines (compute layout once)
-    pos, curvatures = generate_relationship_diagram(G, str(diagram_with_u), data, include_u=True)
+    pos, curvatures = generate_relationship_diagram(G, str(diagram_with_u), data, include_u=True, seed=args.seed)
     
     # Generate diagram WITHOUT U lines (reuse layout)
-    generate_relationship_diagram(G, str(diagram_without_u), data, include_u=False, pos=pos, curvatures=curvatures)
+    generate_relationship_diagram(G, str(diagram_without_u), data, include_u=False, pos=pos, curvatures=curvatures, seed=args.seed)
     
     # Generate component legend
     generate_component_legend(data, str(legend_output))
